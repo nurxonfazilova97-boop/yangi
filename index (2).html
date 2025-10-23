@@ -1,0 +1,261 @@
+<!DOCTYPE html>
+<html lang="uz">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width,initial-scale=1" />
+<title>Sport terminlari lugʻati — share & CSV</title>
+<style>
+:root{--primary:#1e90ff;--bg:#f6f8fb;--card:#fff;--text:#222}
+body{font-family:Segoe UI,Roboto,Arial,sans-serif;background:var(--bg);color:var(--text);margin:0}
+header{background:var(--primary);color:#fff;padding:12px 16px;display:flex;align-items:center;gap:12px;justify-content:space-between}
+header input{font-size:18px;border:0;background:transparent;color:#fff;outline:none;width:60%}
+.header-controls{display:flex;gap:8px}
+.header-controls button{background:transparent;border:1px solid rgba(255,255,255,0.2);color:#fff;padding:6px 10px;border-radius:8px;cursor:pointer}
+.container{max-width:980px;margin:20px auto;padding:18px;background:var(--card);border-radius:10px;box-shadow:0 6px 18px rgba(0,0,0,.06)}
+.search{display:flex;justify-content:center;margin-bottom:12px}
+.search input{width:88%;padding:10px;border:2px solid var(--primary);border-radius:8px;font-size:15px}
+table{width:100%;border-collapse:collapse;margin-top:8px}
+th,td{padding:10px;border-bottom:1px solid #eee;text-align:left;vertical-align:middle}
+th{background:var(--primary);color:#fff;position:sticky;top:0}
+.word-image{width:60px;height:60px;object-fit:cover;border-radius:6px}
+.add-row{display:flex;gap:8px;flex-wrap:wrap;margin-top:12px}
+.add-row input[type="text"]{padding:10px;border-radius:8px;border:1px solid #ccc;flex:1;min-width:150px}
+.add-row input[type="file"]{padding:8px}
+.add-row button{background:var(--primary);color:#fff;border:0;padding:10px 14px;border-radius:8px;cursor:pointer}
+.actions button{margin-right:6px;padding:6px 8px;border-radius:6px;border:0;cursor:pointer}
+.edit-btn{background:#ffc107}
+.delete-btn{background:#dc3545;color:#fff}
+.small{font-size:13px;color:#666;margin-top:8px;text-align:center}
+.notice{margin-top:8px;text-align:center;color:#444}
+</style>
+</head>
+<body>
+<header>
+  <input id="title" value="🏅 Sport terminlari lug‘ati" onchange="saveTitle()" />
+  <div class="header-controls">
+    <button onclick="toggleDark()">🌙</button>
+    <button onclick="printPage()">🖨</button>
+    <button onclick="copyLink()">📋</button>
+  </div>
+</header>
+
+<main class="container">
+  <div class="search"><input id="search" placeholder="Soʻz yoki tarjimani qidiring..." oninput="filterTable()" /></div>
+
+  <table id="table"><thead><tr><th style="width:30%">Inglizcha</th><th style="width:30%">Oʻzbekcha</th><th style="width:16%">Rasm</th><th style="width:24%">Amallar</th></tr></thead><tbody></tbody></table>
+
+  <div class="add-row">
+    <input id="eng" type="text" placeholder="Inglizcha soʻz" />
+    <input id="uz" type="text" placeholder="Oʻzbekcha tarjima" />
+    <input id="img" type="file" accept="image/*" />
+    <button onclick="add()">➕ Qoʻshish</button>
+  </div>
+
+  <div style="display:flex;gap:8px;justify-content:center;margin-top:12px;flex-wrap:wrap">
+    <button onclick="createShare()">🔗 Share (link yaratish)</button>
+    <button onclick="exportCSV()">⬇️ Export CSV</button>
+    <label style="margin:0"><input id="csvfile" type="file" accept=".csv" style="display:none" onchange="importCSV(event)"><button onclick="document.getElementById('csvfile').click()">⬆️ Import CSV</button></label>
+  </div>
+
+  <div id="notice" class="notice"></div>
+  <div id="debug" class="small"></div>
+</main>
+
+<script>
+// === Utilities: safe encode/decode for JSON in URL ===
+function encodeForUrl(obj){
+  try{
+    const s = JSON.stringify(obj);
+    return btoa(unescape(encodeURIComponent(s))).replace(/\+/g,'-').replace(/\//g,'_').replace(/=+$/,'');
+  }catch(e){ return null; }
+}
+function decodeFromUrl(str){
+  try{
+    if(!str) return null;
+    str = str.replace(/-/g,'+').replace(/_/g,'/');
+    while(str.length % 4) str += '=';
+    const json = decodeURIComponent(escape(atob(str)));
+    return JSON.parse(json);
+  }catch(e){ return null; }
+}
+
+// === Storage helpers ===
+function saveTitle(){localStorage.setItem('dict_title', document.getElementById('title').value);}
+function loadTitle(){ const t = localStorage.getItem('dict_title'); if(t) document.getElementById('title').value = t; }
+
+function saveWords(words){ localStorage.setItem('dict_words', JSON.stringify(words)); }
+function loadWords(){ try{ return JSON.parse(localStorage.getItem('dict_words')||'[]'); }catch(e){ return []; } }
+
+// === Table rendering ===
+function renderTable(){
+  const tbody = document.querySelector('#table tbody');
+  tbody.innerHTML = '';
+  const words = loadWords();
+  words.forEach((w,i)=>{
+    const tr = document.createElement('tr');
+    const tdEng = tr.insertCell(); tdEng.textContent = w.eng;
+    const tdUz = tr.insertCell(); tdUz.textContent = w.uz;
+    const tdImg = tr.insertCell();
+    tdImg.innerHTML = w.img ? `<img src="${w.img}" class="word-image">` : '—';
+    const tdAct = tr.insertCell();
+    tdAct.innerHTML = `
+      <button class="actions edit-btn" onclick="edit(${i})">✏️</button>
+      <button class="actions delete-btn" onclick="remove(${i})">🗑️</button>
+      <button class="actions" onclick="copyRowLink(${i})" title="Bu so‘zga link">🔗</button>
+    `;
+    tbody.appendChild(tr);
+  });
+  filterTable();
+}
+
+// === CRUD ===
+function add(){
+  const eng = document.getElementById('eng').value.trim();
+  const uz = document.getElementById('uz').value.trim();
+  const file = document.getElementById('img').files[0];
+  if(!eng || !uz){ alert('Iltimos, har ikkala maydonni toʻldiring.'); return; }
+  if(file){
+    const fr = new FileReader();
+    fr.onload = ()=>{ pushWord(eng,uz,fr.result); document.getElementById('img').value=''; };
+    fr.readAsDataURL(file);
+  }else{ pushWord(eng,uz,''); }
+  document.getElementById('eng').value=''; document.getElementById('uz').value='';
+}
+function pushWord(eng,uz,img){
+  const arr = loadWords(); arr.push({eng,uz,img}); saveWords(arr); renderTable(); document.getElementById('notice').textContent='Soʻz qoʻshildi.';
+}
+function edit(index){
+  const arr = loadWords();
+  const item = arr[index];
+  const newEng = prompt('Inglizcha soʻzni tahrirlang:', item.eng);
+  const newUz = prompt('Oʻzbekcha tarjimani tahrirlang:', item.uz);
+  if(newEng===null || newUz===null) return;
+  if(newEng.trim()===''||newUz.trim()===''){ alert('Boʻsh qoldirib boʻlmaydi.'); return; }
+  item.eng = newEng.trim(); item.uz = newUz.trim();
+  arr[index] = item; saveWords(arr); renderTable(); document.getElementById('notice').textContent='Tahrirlandi.';
+}
+function remove(i){
+  if(!confirm('Haqiqatan ham oʻchirmoqchimisiz?')) return;
+  const arr = loadWords(); arr.splice(i,1); saveWords(arr); renderTable(); document.getElementById('notice').textContent='Oʻchirildi.';
+}
+
+// === filter/search ===
+function filterTable(){
+  const q = document.getElementById('search').value.trim().toLowerCase();
+  document.querySelectorAll('#table tbody tr').forEach(tr=>{
+    const eng = tr.cells[0].textContent.toLowerCase();
+    const uz = tr.cells[1].textContent.toLowerCase();
+    tr.style.display = (eng.includes(q) || uz.includes(q)) ? '' : 'none';
+  });
+}
+
+// === Share (link creation) using URL hash ===
+function createShare(){
+  const words = loadWords();
+  const title = document.getElementById('title').value || '';
+  const payload = {title,words};
+  const enc = encodeForUrl(payload);
+  if(!enc){ alert('Link yaratishda xatolik yuz berdi.'); return; }
+  const url = location.origin + location.pathname + '#d=' + enc;
+  try{ history.replaceState(null,'', '#d=' + enc); }catch(e){ location.hash = 'd=' + enc; }
+  document.getElementById('notice').innerHTML = `<a href="${url}" target="_blank" rel="noopener">Ulashish havolasi (ochish)</a>`;
+  document.getElementById('debug').textContent = 'Link uzunligi: ' + url.length + ' belgilar.';
+}
+
+// On load: if hash present, try to load
+function loadFromHash(){
+  const h = location.hash ? location.hash.slice(1) : '';
+  if(!h) return;
+  if(h.startsWith('d=')){
+    const data = decodeFromUrl(h.slice(2));
+    if(data && Array.isArray(data.words)){
+      saveWords(data.words); if(data.title) document.getElementById('title').value = data.title;
+      document.getElementById('notice').textContent = 'URL orqali lugʻat yuklandi.';
+    } else {
+      document.getElementById('notice').textContent = 'URLdagi maʼlumotni oʻqishda xatolik.';
+    }
+  }
+}
+
+// === copy current URL to clipboard ===
+function copyLink(){
+  if(!location.hash || !location.hash.startsWith('#d=')){ alert('Avval "Share (link yaratish)" tugmasini bosing.'); return; }
+  navigator.clipboard.writeText(location.href).then(()=> alert('Havola nusxalandi!'), ()=> alert('Nusxalash muvaffaqiyatsiz.'));
+}
+
+// === row-level link (single word) ===
+function copyRowLink(index){
+  const arr = loadWords(); if(!arr[index]) return;
+  const payload = {title:document.getElementById('title').value||'', words:[arr[index]]};
+  const enc = encodeForUrl(payload);
+  if(!enc){ alert('Link yaratishda xatolik.'); return; }
+  const url = location.origin + location.pathname + '#d=' + enc;
+  navigator.clipboard.writeText(url).then(()=> alert('Qator havolasi nusxalandi!'), ()=> alert('Nusxalash muvaffaqiyatsiz.'));
+}
+
+// === CSV export/import ===
+function exportCSV(){
+  const arr = loadWords();
+  if(arr.length===0){ alert('Eksport qilish uchun elementlar yoʻq.'); return; }
+  const rows = [['english','uzbek','image']];
+  arr.forEach(r=> rows.push([escapeCSV(r.eng), escapeCSV(r.uz), escapeCSV(r.img||'')]));
+  const csv = rows.map(r=> r.join(',')).join('\r\n');
+  const blob = new Blob([csv], {type:'text/csv;charset=utf-8;'});
+  const a = document.createElement('a');
+  a.href = URL.createObjectURL(blob);
+  const name = (document.getElementById('title').value||'dictionary').replace(/\s+/g,'_') + '.csv';
+  a.download = name;
+  document.body.appendChild(a); a.click(); a.remove(); URL.revokeObjectURL(a.href);
+}
+
+function importCSV(evt){
+  const file = evt.target.files[0]; if(!file) return;
+  const reader = new FileReader();
+  reader.onload = e=>{
+    try{
+      const parsed = parseCSV(e.target.result);
+      if(parsed.length===0){ alert('CSV ichida maʼlumot topilmadi.'); return; }
+      let start = 0; const header = parsed[0].map(s=>s.trim().toLowerCase());
+      if(header.includes('english') && header.includes('uzbek')) start = 1;
+      const arr = loadWords();
+      for(let i=start;i<parsed.length;i++){
+        const row = parsed[i]; if(row.length<2) continue;
+        arr.push({eng:row[0].trim(), uz:row[1].trim(), img: row[2] ? row[2].trim() : ''});
+      }
+      saveWords(arr); renderTable(); document.getElementById('notice').textContent='CSV yuklandi.';
+    }catch(err){ console.error(err); alert('CSV yuklashda xatolik.'); }
+  };
+  reader.readAsText(file,'utf-8');
+  evt.target.value='';
+}
+
+// basic CSV parser supporting quoted commas
+function parseCSV(text){
+  const rows = []; let cur=''; let row=[]; let inQuotes=false;
+  for(let i=0;i<text.length;i++){
+    const ch = text[i]; const nxt = text[i+1];
+    if(ch === '"'){
+      if(inQuotes && nxt === '"'){ cur += '"'; i++; } else { inQuotes = !inQuotes; }
+    } else if(ch === ',' && !inQuotes){ row.push(cur); cur=''; }
+    else if((ch === '\n' || ch === '\r') && !inQuotes){
+      if(ch === '\r' && nxt === '\n') continue;
+      row.push(cur); rows.push(row); row=[]; cur='';
+    } else { cur += ch; }
+  }
+  if(cur !== '' || row.length) { row.push(cur); rows.push(row); }
+  return rows.map(r => r.map(cell => cell.replace(/^"|"$/g,'').trim()));
+}
+
+function escapeCSV(s){ if(s==null) return ''; const v = String(s).replace(/"/g,'""'); if(v.includes(',')||v.includes('\n')||v.includes('"')) return `"${v}"`; return v; }
+
+// === helpers ===
+function toggleDark(){ document.documentElement.classList.toggle('dark'); if(document.documentElement.classList.contains('dark')){ document.body.style.background='#111'; } else { document.body.style.background=''; } }
+function printPage(){ window.print(); }
+
+// initialize
+loadTitle();
+loadFromHash();
+renderTable();
+</script>
+</body>
+</html>
